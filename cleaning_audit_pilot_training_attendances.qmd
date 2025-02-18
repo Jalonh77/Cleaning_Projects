@@ -1,0 +1,117 @@
+---
+title: "Training Attendance Cleaning Pilot"
+format: html
+editor: visual
+author: Jalon Howard
+
+last_updated: 02/14/2025
+---
+
+## I. File Summary
+
+## II. Set-up
+
+### Environment
+
+```{r}
+library(pacman)
+p_load(tidyverse, dplyr, janitor, stringr)
+
+# Files In
+file_in_trainings_uncollapsed <- '/Users/jalonr77/Documents/Evaluation Projects/2024 Data Migration/Data/Raw/Trainings/Wrangled_Reach_Training_Attendances_20241210.csv'
+
+file_in_reach <- '/Users/jalonr77/Documents/Evaluation Projects/2024 Data Migration/Data/Raw/Accounts/Raw_Reach_TrainedUsersActive_20241209.csv'
+
+# File out
+file_out <- '/Users/jalonr77/Documents/Evaluation Projects/Git/Cleaning_Projects/'
+```
+
+### Data In
+
+```{df_trainings_raw <- clean_names(read_csv(file_in_reach))}
+```
+
+```{r}
+
+colnames(df_trainings_raw)
+```
+
+## III. Execute
+
+```{r}
+# Regex to parse unquoted commas
+pat_commas <- regex(pattern=',(?=(?:[^\\"]*\\"[^\\"]*\")*[^\\"]*$)')
+
+# Visual Check: Regex
+string_test <- '"Hello, this is a test", Hello this is a test, This is a test, "dsafdsaf,fdsafdas"'
+
+str_count(string_test, pat_commas)
+```
+
+```{r}
+df_trainings_wrangle <- df_trainings_raw %>%
+  mutate(
+    # Create col: count of affiliations = number of commas + 1
+    n_affiliations = case_when(
+      is.na(school_code_from_school_sot) ~ NA,
+      .default = str_count(school_code_from_school_sot,",")+1),
+    # Create col: count of trainings = number of commas + 1
+    n_trainings = case_when(
+      is.na(trainings_attended_c_t) ~ NA,
+      .default = str_count(trainings_attended_c_t,",")+1),
+    # Create col: count of contracts = number of commas + 1
+    n_contracts = case_when(
+    is.na(keep_partnership_bd) ~ NA,
+    .default = str_count(keep_partnership_bd, pat_commas)+1)
+  )
+```
+
+```{r}
+# ISDs:
+# (1) Upper Eastern Peninsula = 'MI-ISD-20'
+# (2) Midland County ESA = 'MI-ISD-46'
+# (3) Delta-Schoolcraft = 'MI-ISD-17'
+
+# Filter only cleaning pilot ISDs with one or more cleaning conditions:
+# (1) Multiple affiliations & Multiple trainings
+# (2) Multiple contracts & Multiple trainings
+# (3) Missing contracts
+# (4) Missing affiliations
+
+df_trainings_out <- df_trainings_wrangle %>%
+  mutate(
+    flag_multiple_affiliations = case_when(
+      n_trainings > 1 & n_affiliations > 1 ~ TRUE, 
+      .default = FALSE),
+    flag_multiple_contracts = case_when(
+      n_trainings > 1 & n_contracts > 1 ~ TRUE, 
+      .default = FALSE), 
+    flag_missing_affiliations = case_when(
+      is.na(n_affiliations) ~ TRUE, 
+      .default = FALSE),
+    flag_missing_contracts = case_when(
+      is.na(n_contracts) ~ TRUE, 
+      .default = FALSE), 
+  ) %>%
+  filter(grepl('MI-ISD-20|MI-ISD-46|MI-ISD-17', lea_id) &
+           (flag_multiple_affiliations|
+               flag_multiple_contracts|
+               flag_missing_affiliations|
+               flag_missing_contracts)) %>%
+  select(-contains('delete'))
+
+# Visual Check
+df_trainings_out %>%
+  select(flag_multiple_affiliations,
+               flag_multiple_contracts,
+               flag_missing_affiliations,
+               flag_missing_contracts)
+```
+
+## IV. Finalize & Write Out Data
+
+```{r}
+
+write_csv(df_trainings_out, paste0(file_out,'cleaning_audit_pilot_training_attendances_20250218.csv'))
+
+```
