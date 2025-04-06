@@ -4,39 +4,83 @@ format: html
 editor: visual
 author: Jalon Howard
 
-last_updated: 02/14/2025
+last_updated: 03/26/2025
 ---
 
 ## I. File Summary
 
 ## II. Set-up
 
-### Environment
+### Environment & Files
 
 ```{r}
 library(pacman)
 p_load(tidyverse, dplyr, janitor, stringr)
 
-# Files In
-file_in_trainings_uncollapsed <- '/Users/jalonr77/Documents/Evaluation Projects/2024 Data Migration/Data/Raw/Trainings/Wrangled_Reach_Training_Attendances_20241210.csv'
+date_in <- '20250406'
 
+# Directory In
+dir_in = '/Users/jalonr77/Documents/Evaluation Projects/Git Projects/Cleaning_Projects/Data/Raw/'
+
+# Files In
+# Salesforce Exports
+file_in_sf_attendances <- paste0(dir_in,'sf_export_attendances_all_',date_in,'.csv')
+file_in_sf_sessions <- paste0(dir_in,'sf_export_training_sessions_all_',date_in,'.csv')
+file_in_sf_affiliations <- paste0(dir_in,'sf_export_affiliations_all_',date_in,'.csv')
+file_in_sf_accounts <- paste0(dir_in,'sf_export_accounts_all_',date_in,'.csv')
+file_in_sf_contracts <- paste0(dir_in,'sf_export_contracts_all_',date_in,'.csv')
+
+# Reach Data
 file_in_reach <- '/Users/jalonr77/Documents/Evaluation Projects/2024 Data Migration/Data/Raw/Accounts/Raw_Reach_TrainedUsersActive_20241209.csv'
+file_in_flagged_attendances <- '/Users/jalonr77/Documents/Evaluation Projects/Git Projects/Cleaning_Projects/Data/Raw/flagged_attendances_rachel.csv'
 
 # File out
-file_out <- '/Users/jalonr77/Documents/Evaluation Projects/Git/Cleaning_Projects/'
+# Auto-update date suffix for file-out names
+date_suff <- str_remove_all(as.character(today()), "-")
+
+file_out <- '/Users/jalonr77/Documents/Evaluation Projects/Git Projects/Cleaning_Projects/Data/Out/'
 ```
 
 ### Data In
 
-```{df_trainings_raw <- clean_names(read_csv(file_in_reach))}
+```{r}
+df_trainees_reach <- clean_names(read_csv(file_in_reach, show_col_types = FALSE))
+df_trainings_flagged <- clean_names(read_csv(file_in_flagged_attendances, show_col_types = FALSE))
+
+df_sf_training_sessions <- clean_names(read_csv(file_in_sf_sessions, show_col_types = FALSE))
+df_sf_training_attendances <- clean_names(read_csv(file_in_sf_attendances, show_col_types = FALSE))
+df_sf_training_affiliations <- clean_names(read_csv(file_in_sf_affiliations, show_col_types = FALSE))
+df_sf_accounts <- clean_names(read_csv(file_in_sf_accounts, show_col_types = FALSE))
+df_sf_contracts <- clean_names(read_csv(file_in_sf_contracts, show_col_types = FALSE))
+
 ```
 
 ```{r}
+colnames(df_sf_training_attendances)
+df_sf_training_attendances
 
-colnames(df_trainings_raw)
+df_sf_training_attendances %>%
+  filter(is.na(benefit_session_legacy_training_session_id_c))
 ```
 
-## III. Execute
+```{r}
+colnames(df_training_sessions)
+```
+
+## III. Clean & Wrangle
+
+### Reach
+
+```{r}
+colnames(df_trainees_reach)
+```
+
+#### \_\_Audit\_\_: Trainees without Attendances
+
+```{r}
+audit_trainees_without_attendances <- df_trainees_reach %>%
+  filter(is.na(session_id_salesforce))
+```
 
 ```{r}
 # Regex to parse unquoted commas
@@ -49,36 +93,31 @@ str_count(string_test, pat_commas)
 ```
 
 ```{r}
-df_trainings_wrangle <- df_trainings_raw %>%
-  mutate(
-    # Create col: count of affiliations = number of commas + 1
-    n_affiliations = case_when(
-      is.na(school_code_from_school_sot) ~ NA,
-      .default = str_count(school_code_from_school_sot,",")+1),
-    # Create col: count of trainings = number of commas + 1
-    n_trainings = case_when(
-      is.na(trainings_attended_c_t) ~ NA,
-      .default = str_count(trainings_attended_c_t,",")+1),
-    # Create col: count of contracts = number of commas + 1
-    n_contracts = case_when(
-    is.na(keep_partnership_bd) ~ NA,
-    .default = str_count(keep_partnership_bd, pat_commas)+1)
-  )
-```
-
-```{r}
-# ISDs:
+# Pilot cleaning ISDs:
 # (1) Upper Eastern Peninsula = 'MI-ISD-20'
 # (2) Midland County ESA = 'MI-ISD-46'
 # (3) Delta-Schoolcraft = 'MI-ISD-17'
+# !grepl('MI-ISD-20|MI-ISD-46|MI-ISD-17', lea_id) &
 
-# Filter only cleaning pilot ISDs with one or more cleaning conditions:
-# (1) Multiple affiliations & Multiple trainings
-# (2) Multiple contracts & Multiple trainings
-# (3) Missing contracts
-# (4) Missing affiliations
 
-df_trainings_out <- df_trainings_wrangle %>%
+df_trainees_reach_wrangled <- df_trainees_reach  %>%
+  # Create Counts of trainings, contracts and affiliations (number of commas + 1)
+  mutate(
+    n_affiliations = case_when(
+      is.na(school_code_from_school_sot) ~ NA,
+      .default = str_count(school_code_from_school_sot,",")+1),
+    n_trainings = case_when(
+      is.na(trainings_attended_c_t) ~ NA,
+      .default = str_count(trainings_attended_c_t,",")+1),
+    n_contracts = case_when(
+    is.na(keep_partnership_bd) ~ NA,
+    .default = str_count(keep_partnership_bd, pat_commas)+1)
+  ) %>%
+  # Filter only cleaning pilot ISDs with one or more cleaning conditions:
+  # (1) Multiple affiliations & Multiple trainings
+  # (2) Multiple contracts & Multiple trainings
+  # (3) Missing contracts
+  # (4) Missing affiliations  
   mutate(
     flag_multiple_affiliations = case_when(
       n_trainings > 1 & n_affiliations > 1 ~ TRUE, 
@@ -91,27 +130,369 @@ df_trainings_out <- df_trainings_wrangle %>%
       .default = FALSE),
     flag_missing_contracts = case_when(
       is.na(n_contracts) ~ TRUE, 
-      .default = FALSE), 
+      .default = FALSE)
   ) %>%
-  filter(grepl('MI-ISD-20|MI-ISD-46|MI-ISD-17', lea_id) &
-           (flag_multiple_affiliations|
-               flag_multiple_contracts|
-               flag_missing_affiliations|
-               flag_missing_contracts)) %>%
-  select(-contains('delete'))
+  # Add columns for tier coordinators
+  # lowercase email for later join
+  mutate(
+    Amount_Attended_c = "",
+    email=str_to_lower(email)
+  ) %>%
+  select(email, first_name, last_name, role, country, state, 
+         isd_boces_sot, lea_id, district_sot, district_id, 
+         school_sot, school_code_from_school_sot, orgs_and_agencies_sot, org_id_salesforce_from_orgs_and_agencies_sot, 
+         keep_partnership_bd, session_id_salesforce, trainings_attended_c_t, training_dates, 
+         status_from_trainings_attended_c_t, Amount_Attended_c, created_time, notes, 
+         n_trainings, n_affiliations, n_contracts, flag_multiple_affiliations, 
+         flag_multiple_contracts, flag_missing_affiliations, flag_missing_contracts
+  ) %>%
+  # Parse records with at least one flag
+  # filter(
+  #   !is.na(session_id_salesforce) &
+  #          (flag_multiple_affiliations|flag_multiple_contracts|
+  #             flag_missing_affiliations|flag_missing_contracts)) %>%
+  rename(
+    Email__c=email, 
+    First_Name__c=first_name, 
+    Last_Name__c=last_name, 
+    Role__c=role, 
+    Country__c=country, 
+    State__c=state,
+    isd_name_reach = isd_boces_sot,
+    ISD_RESA_BOCES__c=lea_id,
+    district_name_reach = district_sot,
+    District__c=district_id, 
+    school_name_reach = school_sot,
+    School__c=school_code_from_school_sot, 
+    org_name_reach = orgs_and_agencies_sot,
+    Org_Agency__c=org_id_salesforce_from_orgs_and_agencies_sot, 
+    Partnership__c=keep_partnership_bd, 
+    reach_notes=notes, 
+  ) 
+```
+
+```{r}
+# Visual Check
+df_trainees_reach_wrangled %>%
+  select(ISD_RESA_BOCES__c,
+         Email__c,
+         flag_multiple_affiliations,
+         flag_multiple_contracts,
+         flag_missing_affiliations,
+         flag_missing_contracts)
+
+df_trainees_reach_wrangle
+```
+
+```{r}
+# Person to Training 
+df_trainings_reach_wrangled <- df_trainees_reach_wrangled %>%
+  separate_longer_delim(data=.,
+                        cols=c(trainings_attended_c_t, status_from_trainings_attended_c_t, session_id_salesforce),
+                        delim = ','
+  ) %>%
+  select(-c(training_dates))
+
+df_trainees_reach_wrangle
+
+df_trainees_reach_wrangled %>%
+  filter(is.na(session_id_salesforce))
+```
+
+### Flagged Attendances
+
+```{r}
+colnames(df_trainings_flagged)
+```
+
+```{r}
+
+df_trainings_flagged_wrangled <- df_trainings_flagged %>%
+  mutate(email=str_to_lower(email)) %>%
+  select(email, first_name, last_name, role, country, state, 
+         isd_boces_sot, lea_id, district_sot, district_id, 
+         school_sot, school_code_from_school_sot, orgs_and_agencies_sot, 
+         org_id_salesforce_from_orgs_and_agencies_sot, 
+         keep_partnership_bd, session_id_salesforce, trainings_attended_c_t, training_dates, 
+         status_from_trainings_attended_c_t, created_time, notes) %>%
+  rename(
+    Email__c=email, 
+    First_Name__c=first_name, 
+    Last_Name__c=last_name, 
+    Role__c=role, 
+    Country__c=country, 
+    State__c=state, 
+    ISD_RESA_BOCES__c=lea_id, 
+    District__c=district_id, 
+    School__c=school_code_from_school_sot, 
+    Org_Agency__c=org_id_salesforce_from_orgs_and_agencies_sot, 
+    Partnership__c=keep_partnership_bd, 
+    reach_notes=notes, 
+  )
+
+df_trainings_flagged_wrangled
+
+```
+
+### Salesforce Attendances
+
+```{r}
+# Create template for Rename statement
+for(i in colnames(df_sf_training_attendances)){
+  cat(' = ',i,',\n', sep = "")
+}
+
+```
+
+```{r}
+df_sf_training_attendances_wrangled <- df_sf_training_attendances %>%
+  rename(
+    attendance_id = id,
+    training_name = benefit_assignment_benefit_name,
+    session_id_legacy = benefit_session_legacy_training_session_id_c,
+    Training_Session_ID__c = benefit_session_training_session_id_for_import_c,
+    training_tier = program_enrollment_program_tier_c,
+    training_date = actual_completion_date,
+    completion_status = disbursement_status,
+    trainee_account_id = account_id_from_program_enrollment_c,
+    First_Name__c = program_enrollment_account_first_name,
+    Last_Name__c = program_enrollment_account_last_name,
+    Email__c = recipient_email_c,
+    tier_2_role = program_enrollment_account_tier_2_role_s_c,
+    Role__c = recipient_role_c,
+    State__c = partnership_r_account_billing_state_code,
+    Country__c = partnership_r_account_billing_country_code,
+    Partnership__c = affiliated_contracts_c,
+    ISDs = affiliated_is_ds_c,
+    District__c = affiliated_districts_c,
+    School__c = affiliated_schools_c,
+    Implementing_Schools__c = affiliated_implementing_schools_c,
+    Org_Agency__c = affiliated_orgs_agencies_c
+    ) %>%
+  
+  mutate(Email__c=str_to_lower(Email__c),
+         Amount_Attended__c=NA)
+
+nrow(df_sf_training_attendances_wrangled)
+
+df_sf_training_attendances_wrangled
+```
+
+### Salesforce Affiliations
+
+```{r}
+# Create template for Rename statement
+for(i in colnames(df_sf_training_affiliations)){
+  cat(' = ',i,',\n', sep = "")
+}
+
+table(df_sf_training_affiliations$account_type_c, useNA = 'always')
+```
+
+```{r}
+sum(is.na(df_sf_training_affiliations$partnership_name_c))
+sum(!is.na(df_sf_training_affiliations$partnership_name_c))
+```
+
+```{r}
+df_affiliations_wrangled <- df_sf_training_affiliations %>%
+  rename(
+    aff_id = name,
+    aff_account_id = account_c,
+    aff_name = account_r_name,
+    attendance_id = training_attendance_c,
+    Partnership__c = partnership_name_c,
+    aff_entity_code = entity_code_c,
+    isd = training_attendance_r_affiliated_is_ds_c,
+    district= training_attendance_r_affiliated_districts_c,
+    school = training_attendance_r_affiliated_schools_c,
+    implementing_school = training_attendance_r_affiliated_implementing_schools_c
+  ) %>%
+  mutate(
+    aff_type=case_when(
+      is.na(account_type_c) ~ 'Contract',
+      .default = account_type_c
+    )
+  ) %>%
+  select(-account_type_c)
 
 # Visual Check
-df_trainings_out %>%
-  select(flag_multiple_affiliations,
-               flag_multiple_contracts,
-               flag_missing_affiliations,
-               flag_missing_contracts)
+df_affiliations_wrangled 
+
+table(df_affiliations_wrangled$aff_type)
+```
+
+```{r}
+
+# Aggregate row by attendance id
+df_affiliations_grouped <- df_affiliations_wrangled %>%
+  group_by(attendance_id) %>%
+  summarise(n_aff_contracts = sum(!is.na(Partnership__c)),
+            n_aff_accounts = sum(is.na(Partnership__c)),
+    
+            all_contracts = paste0(Partnership__c[aff_type=='Contract'], collapse = ','),
+            
+            all_isds = paste0(isd[aff_type=='ISD/RESA/BOCES'], collapse = ','),
+            ISD_RESA_BOCES__c = paste0(aff_entity_code[aff_type=='ISD/RESA/BOCES'], collapse = ','),
+            
+            all_districts = paste0(district[aff_type=='District'], collapse = ','),
+            District__c = paste0(aff_entity_code[aff_type=='District'], collapse = ','),
+            
+            all_schools = paste0(school[aff_type=='School'], collapse = ','),
+            School__c = paste0(aff_entity_code[aff_type=='School'], collapse = ','),
+            
+            all_implementing_schools = paste0(implementing_school[aff_type=='Implementing School'], collapse = ','),
+            
+            all_orgs = paste0(isd[aff_type=='Org/Agency'], collapse = ','),
+            Org_Agency__c = paste0(aff_entity_code[aff_type=='Org/Agency'], collapse = ',')
+  )
+
+
+df_affiliations_grouped
+```
+
+### Salesforce Accounts
+
+```{r}
+colnames(df_sf_accounts)
+```
+
+### Salesforce Contracts
+
+```{r}
+colnames(df_sf_contracts)
+df_sf_contracts
+```
+
+## IV. Execute
+
+### Compare Flagged & Salesforce Attendances
+
+```{r}
+df_trainings_flagged_wrangled %>%
+  anti_join(x=., y=df_sf_training_attendances_wrangled,
+            by=c('Email__c'='Email__c', 'session_id_salesforce'='session_id_legacy'),
+            na_matches='never')
+```
+
+### Reach Attendances Missing From Salesforce
+
+```{r}
+df_reach_records_missing_from_sf <- df_trainings_reach_wrangled %>%
+  filter(!is.na(session_id_salesforce)) %>%
+  mutate(session_id_salesforce=as.double(session_id_salesforce)) %>%
+  anti_join(x=., y=df_sf_training_attendances_wrangled,
+            by=c('Email__c'='Email__c', 'session_id_salesforce'='session_id_legacy'),
+            na_matches='never')  %>%
+  # Add import training session id
+  left_join(x=., y=df_training_sessions[c('legacy_training_session_id_c','training_session_id_for_import_c')],
+            by=c('session_id_salesforce'='legacy_training_session_id_c')) %>%
+  left_join(x=., y=df_sf_accounts[c('id','person_email')],
+            by=c('Email__c'='person_email'), na_matches='never') %>%
+  rename(Training_Session_ID__c=training_session_id_for_import_c,
+         account_id_salesforce = id)
+
+
+df_reach_records_missing_from_sf
+```
+
+### Salesforce Training Attendances Missing [**BOTH**]{.underline} Contract and Account Affiliations
+
+```{r}
+
+# Training Attendances without any affiliations
+df_out_missing_both_affiliations <- df_sf_training_attendances_wrangled %>%
+  select(-c(Country__c, State__c, Partnership__c, ISDs, District__c, School__c, Implementing_Schools__c, Org_Agency__c)) %>%
+  mutate(
+        semester = case_when(between(x = month(training_date), left = 8, right = 12) ~ paste("Fall", year(training_date)),
+                             between(x = month(training_date), left = 1, right = 7) ~ paste("Spring", year(training_date)),
+                             .default = NA)
+  ) %>%
+  anti_join(x=., y=df_affiliations_grouped['attendance_id'],
+            by='attendance_id',
+            na_matches='never')  %>%
+  left_join(x=., 
+            y=df_trainings_reach_wrangled[c('Email__c', 'isd_name_reach', 'ISD_RESA_BOCES__c',
+                                            'district_name_reach', 'District__c',
+                                            'school_name_reach', 'School__c', 'org_name_reach', 'Org_Agency__c', 'Partnership__c', 'reach_notes',
+                                            'n_trainings', 'n_affiliations', 'n_contracts', 'flag_multiple_affiliations', 
+                                            'flag_multiple_contracts', 'flag_missing_affiliations', 'flag_missing_contracts')],
+            by='Email__c', na_matches='never') %>%
+  distinct() %>%
+  rename(ISD_RESA_BOCES__c_reach='ISD_RESA_BOCES__c', 
+         District__c_reach='District__c', 
+         School__c_reach='School__c', 
+         Org_Agency__c_reach='Org_Agency__c', 
+         Partnership__c_reach='Partnership__c', 
+         n_trainings_reach='n_trainings', 
+         n_affiliations_reach='n_affiliations', 
+         n_contracts_reach='n_contracts', 
+         flag_multiple_affiliations_reach='flag_multiple_affiliations', 
+         flag_multiple_contracts_reach='flag_multiple_contracts', 
+         flag_missing_affiliations_reach='flag_missing_affiliations', 
+         flag_missing_contracts_reach='flag_missing_contracts') 
+
+df_out_missing_both_affiliations
+
+df_sf_training_attendances_wrangled %>%
+  filter(Email__c=='aabedr@mail.gvsu.edu')
+```
+
+### Salesforce Training Attendances Missing [Either]{.underline} Contract or Account Affiliation
+
+```{r}
+
+# Join Attendance to Grouped affiliation and filter where missing either contract or account
+df_sf_missing_one_affiliation <- df_sf_training_attendances_wrangled %>%
+  select(-c(Partnership__c, ISDs, District__c, School__c, Implementing_Schools__c, Org_Agency__c)) %>%
+  inner_join(x=.,
+             y=df_affiliations_grouped,
+             by='attendance_id', na_matches='never') %>%
+  filter((n_aff_contracts==0 |
+           n_aff_accounts==0) &
+          # Exclude records under community contract
+           !grepl(pattern = 'TRAILS Free T3 Community--TRAILS Free Opportunity', x = all_contracts)
+         ) 
 ```
 
 ## IV. Finalize & Write Out Data
 
+### Sort Data
+
+```{r}
+# Sort by persons with descending max training date
+df_out_missing_both_affiliations_sorted <- df_out_missing_both_affiliations %>% 
+  group_by(trainee_account_id) %>%
+  mutate(
+    training_date_most_recent=max(training_date)
+    ) %>%
+  arrange(desc(training_date_most_recent), desc(trainee_account_id), desc(training_date))
+
+df_out_missing_both_affiliations_sorted
+
+nrow(df_out_missing_both_affiliations)
+
+
+```
+
+```{r}
+# Sort by persons with descending max training date
+df_attendances_missing_either_affiliation_sorted <- df_sf_missing_one_affiliation %>% 
+  group_by(trainee_account_id) %>%
+  mutate(
+    training_date_most_recent=max(training_date)
+    ) %>%
+  arrange(desc(training_date_most_recent), desc(trainee_account_id), desc(training_date))
+
+df_attendances_missing_either_affiliation_sorted
+
+nrow(df_attendances_missing_either_affiliation)
+```
+
 ```{r}
 
-write_csv(df_trainings_out, paste0(file_out,'cleaning_audit_pilot_training_attendances_20250218.csv'))
+write_csv(df_reach_records_missing_from_sf, paste0(file_out,'cleaning_audit_reach_records_missing_from_sf_',date_suff,'.csv'))
+write_csv(df_out_missing_both_affiliations_sorted, paste0(file_out,'cleaning_audit_sf_attendances_missing_both_affTypes_',date_suff,'.csv'))
+write_csv(df_attendances_missing_either_affiliation_sorted, paste0(file_out,'cleaning_audit_sf_attendances_missing_either_affType',date_suff,'.csv'))
 
 ```
