@@ -269,9 +269,13 @@ df_sf_training_attendances_wrangled <- df_sf_training_attendances %>%
     Implementing_Schools__c = affiliated_implementing_schools_c,
     Org_Agency__c = affiliated_orgs_agencies_c
     ) %>%
-  
   mutate(Email__c=str_to_lower(Email__c),
-         Amount_Attended__c=NA)
+         Amount_Attended__c=NA,
+         semester = case_when(between(x = month(training_date), left = 8, right = 12) ~ paste("Fall", year(training_date)),
+                             between(x = month(training_date), left = 1, right = 7) ~ paste("Spring", year(training_date)),
+                             .default = NA)
+         ) %>%
+  select(-c(State__c,Country__c))
 
 nrow(df_sf_training_attendances_wrangled)
 
@@ -303,6 +307,10 @@ df_affiliations_wrangled <- df_sf_training_affiliations %>%
     attendance_id = training_attendance_c,
     Partnership__c = partnership_name_c,
     aff_entity_code = entity_code_c,
+    Country_account= account_r_billing_country_code,	
+    State_account = account_r_billing_state_code,
+    Country_contract_account = partnership_r_account_billing_country_code,
+    State_contract_account = partnership_r_account_billing_state_code,
     isd = training_attendance_r_affiliated_is_ds_c,
     district= training_attendance_r_affiliated_districts_c,
     school = training_attendance_r_affiliated_schools_c,
@@ -314,6 +322,8 @@ df_affiliations_wrangled <- df_sf_training_affiliations %>%
       .default = account_type_c
     )
   ) %>%
+  unite(col = 'Country__c', Country_account, Country_contract_account, na.rm = TRUE, remove = TRUE) %>%
+  unite(col = 'State__c', State_account, State_contract_account, na.rm = TRUE, remove = TRUE) %>%
   select(-account_type_c)
 
 # Visual Check
@@ -323,32 +333,44 @@ table(df_affiliations_wrangled$aff_type)
 ```
 
 ```{r}
+df_affiliations_wrangled %>% filter(aff_type=='Org/Agency')
+```
+
+```{r}
 
 # Aggregate row by attendance id
 df_affiliations_grouped <- df_affiliations_wrangled %>%
   group_by(attendance_id) %>%
-  summarise(n_aff_contracts = sum(!is.na(Partnership__c)),
+  summarise(Country__c_all = paste0(unique(Country__c), collapse = ','),
+            State__c_all = paste0(unique(State__c), collapse = ','),
+            n_aff_contracts = sum(!is.na(Partnership__c)),
             n_aff_accounts = sum(is.na(Partnership__c)),
     
-            all_contracts = paste0(Partnership__c[aff_type=='Contract'], collapse = ','),
+            all_contracts = paste0(unique(Partnership__c[aff_type=='Contract']), collapse = ','),
             
-            all_isds = paste0(isd[aff_type=='ISD/RESA/BOCES'], collapse = ','),
-            ISD_RESA_BOCES__c = paste0(aff_entity_code[aff_type=='ISD/RESA/BOCES'], collapse = ','),
+            # all_isds = paste0(isd[aff_type=='ISD/RESA/BOCES'], collapse = ','),
+            all_isds = paste0(unique(aff_name[aff_type=='ISD/RESA/BOCES']), collapse = ','),
+
+            ISD_RESA_BOCES__c = paste0(unique(aff_entity_code[aff_type=='ISD/RESA/BOCES']), collapse = ','),
             
-            all_districts = paste0(district[aff_type=='District'], collapse = ','),
-            District__c = paste0(aff_entity_code[aff_type=='District'], collapse = ','),
+            all_districts = paste0(unique(aff_name[aff_type=='District']), collapse = ','),
+            District__c = paste0(unique(aff_entity_code[aff_type=='District']), collapse = ','),
             
-            all_schools = paste0(school[aff_type=='School'], collapse = ','),
-            School__c = paste0(aff_entity_code[aff_type=='School'], collapse = ','),
+            # all_schools = paste0(school[aff_type=='School'], collapse = ','),
+            all_schools = paste0(unique(aff_name[aff_type=='School']), collapse = ','),
+            School__c = paste0(unique(aff_entity_code[aff_type=='School']), collapse = ','),
             
-            all_implementing_schools = paste0(implementing_school[aff_type=='Implementing School'], collapse = ','),
+            all_implementing_schools = paste0(unique(aff_name[aff_type=='Implementing School']), collapse = ','),
+      
             
-            all_orgs = paste0(isd[aff_type=='Org/Agency'], collapse = ','),
-            Org_Agency__c = paste0(aff_entity_code[aff_type=='Org/Agency'], collapse = ',')
+            all_orgs = paste0(unique(aff_name[aff_type=='Org/Agency']), collapse = ','),
+            Org_Agency__c = paste0(unique(aff_entity_code[aff_type=='Org/Agency']), collapse = ',')
   )
 
 
 df_affiliations_grouped
+
+
 ```
 
 ### Salesforce Accounts
@@ -402,24 +424,27 @@ df_reach_records_missing_from_sf
 
 # Training Attendances without any affiliations
 df_out_missing_both_affiliations <- df_sf_training_attendances_wrangled %>%
-  select(-c(Country__c, State__c, Partnership__c, ISDs, District__c, School__c, Implementing_Schools__c, Org_Agency__c)) %>%
-  mutate(
-        semester = case_when(between(x = month(training_date), left = 8, right = 12) ~ paste("Fall", year(training_date)),
-                             between(x = month(training_date), left = 1, right = 7) ~ paste("Spring", year(training_date)),
-                             .default = NA)
-  ) %>%
+  select(-c(Partnership__c, ISDs, District__c, School__c, Implementing_Schools__c, Org_Agency__c)) %>%
   anti_join(x=., y=df_affiliations_grouped['attendance_id'],
             by='attendance_id',
             na_matches='never')  %>%
   left_join(x=., 
-            y=df_trainings_reach_wrangled[c('Email__c', 'isd_name_reach', 'ISD_RESA_BOCES__c',
+            y=df_trainings_reach_wrangled[c('Email__c', 'Country__c', 'State__c',
+                                            'isd_name_reach', 'ISD_RESA_BOCES__c',
                                             'district_name_reach', 'District__c',
-                                            'school_name_reach', 'School__c', 'org_name_reach', 'Org_Agency__c', 'Partnership__c', 'reach_notes',
-                                            'n_trainings', 'n_affiliations', 'n_contracts', 'flag_multiple_affiliations', 
-                                            'flag_multiple_contracts', 'flag_missing_affiliations', 'flag_missing_contracts')],
+                                            'school_name_reach', 'School__c',
+                                            'org_name_reach',
+                                            'Org_Agency__c', 'Partnership__c', 'reach_notes',
+                                            'n_trainings', 'n_affiliations', 'n_contracts', 
+                                            'flag_multiple_affiliations', 
+                                            'flag_multiple_contracts',
+                                            'flag_missing_affiliations', 
+                                            'flag_missing_contracts')],
             by='Email__c', na_matches='never') %>%
   distinct() %>%
-  rename(ISD_RESA_BOCES__c_reach='ISD_RESA_BOCES__c', 
+  rename(Country__c_reach = 'Country__c',
+         State__c_reach  = 'State__c',
+         ISD_RESA_BOCES__c_reach='ISD_RESA_BOCES__c', 
          District__c_reach='District__c', 
          School__c_reach='School__c', 
          Org_Agency__c_reach='Org_Agency__c', 
@@ -449,10 +474,18 @@ df_sf_missing_one_affiliation <- df_sf_training_attendances_wrangled %>%
              y=df_affiliations_grouped,
              by='attendance_id', na_matches='never') %>%
   filter((n_aff_contracts==0 |
-           n_aff_accounts==0) &
-          # Exclude records under community contract
-           !grepl(pattern = 'TRAILS Free T3 Community--TRAILS Free Opportunity', x = all_contracts)
-         ) 
+           n_aff_accounts==0))
+
+df_sf_missing_one_affiliation
+
+```
+
+```{r}
+
+df_sf_missing_one_affiliation %>%
+  # Exclude records under community contract
+  filter(grepl(pattern = 'TRAILS Free T3 Community--TRAILS Free Opportunity',
+                x = all_contracts))
 ```
 
 ## IV. Finalize & Write Out Data
