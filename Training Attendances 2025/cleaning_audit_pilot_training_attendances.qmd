@@ -1,5 +1,5 @@
 ---
-title: "Training Attendance Cleaning Pilot"
+title: "Training Attendance Cleaning"
 format: html
 editor: visual
 author: Jalon Howard
@@ -55,16 +55,9 @@ df_sf_contracts <- clean_names(read_csv(file_in_sf_contracts, show_col_types = F
 
 ```
 
-```{r}
-colnames(df_sf_training_attendances)
-df_sf_training_attendances
+### Data Out
 
-df_sf_training_attendances %>%
-  filter(is.na(benefit_session_legacy_training_session_id_c))
-```
-
-```{r}
-colnames(df_training_sessions)
+```{}
 ```
 
 ## III. Clean & Wrangle
@@ -473,8 +466,11 @@ df_sf_missing_one_affiliation <- df_sf_training_attendances_wrangled %>%
   inner_join(x=.,
              y=df_affiliations_grouped,
              by='attendance_id', na_matches='never') %>%
-  filter((n_aff_contracts==0 |
-           n_aff_accounts==0))
+  filter((n_aff_contracts==0 | n_aff_accounts==0) &
+           !grepl(pattern = 'TRAILS Free T3 Community--TRAILS Free Opportunity',
+                x = all_contracts)
+           
+  )
 
 df_sf_missing_one_affiliation
 
